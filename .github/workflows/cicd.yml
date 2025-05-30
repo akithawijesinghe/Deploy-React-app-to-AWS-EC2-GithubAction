@@ -11,20 +11,40 @@ jobs:
     steps:
       - name: Checkout Source
         uses: actions/checkout@v3
-      - name: Login to Docker Hub
-        run: docker login -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PASSWORD }}
-      - name: Build Docker Image
-        run: docker build -t akithawj/reactawsec2 .
-      - name: Publish image to docker hub
-        run: docker push akithawj/reactawsec2:latest  
 
-  deploy: 
+      - name: Login to Docker Hub
+        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      - name: Build Docker Image
+        run: docker build -t akithawj/reactawsec2:latest .
+
+      - name: Publish image to Docker Hub
+        run: docker push akithawj/reactawsec2:latest
+
+  deploy:
+    runs-on: ubuntu-latest
     needs: build
-    runs-on: aws-ec2    
+
+    env:
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      CONTAINER_NAME: reactContainer
+      IMAGE_NAME: akithawj/reactawsec2:latest
+
     steps:
-      - name: Pull image from docker hub
-        run: docker pull akithawj/reactawsec2:latest
-      - name: Delete Old Container
-        run: docker rm -f reactContainer
-      - name: Run docker container
-        run: docker run -d -p 3000:80 --name reactContainer akithawj/reactawsec2
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Deploy Docker Container on Remote Host
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ env.SSH_USER }}@${{ env.SSH_HOST }} << EOF
+            echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+            docker stop ${{ env.CONTAINER_NAME }} || true
+            docker rm ${{ env.CONTAINER_NAME }} || true
+            docker rmi ${{ env.IMAGE_NAME }} || true
+            docker pull ${{ env.IMAGE_NAME }}
+            docker run --name ${{ env.CONTAINER_NAME }} -p 80:80 -d ${{ env.IMAGE_NAME }}
+          EOF
